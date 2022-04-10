@@ -72,7 +72,6 @@ func (r *ScrapySite) GetDomainInfo(url string) map[string]interface{} {
 		re := regexp.MustCompile(`[;,\?\/:#]`)
 		s1 = re.Split(s, -1)[0]
 		oRst := make(map[string]interface{})
-		oRst["url"] = url
 		aRst := r.GetDomainIps(s1)
 		var xxx []map[string]interface{}
 		for _, x := range aRst {
@@ -158,6 +157,26 @@ func (ss *ScrapySite) SendJsonReq(data map[string]interface{}, id string) {
 		ss.SendReq(bytes.NewBuffer(jsonValue), id)
 	}
 }
+
+// 添加不重复url
+func (ss *ScrapySite) AddUrls(url string, data []string) []string {
+	for _, x := range data {
+		if x == url {
+			return data
+		}
+	}
+	return append(data, url)
+}
+
+// 处理非文本文件
+func (ss *ScrapySite) DoNotText(r *colly.Response, data *map[string]interface{}) {
+	// 非文本，计算sha1、md5
+	if strings.Index(r.Headers.Get("Content-Type"), "text/") == -1 && 0 < len(r.Body) {
+		md5R, sha1R, sha256R := ss.Hash(r.Body)
+		&data["hash"] = map[string]interface{}{"md5": md5R, "sha1": sha1R, "sha256": sha256R}
+		return
+	}
+}
 func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
 	oPost := make(map[string]interface{})
 
@@ -165,23 +184,23 @@ func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
 	oRst, bFound := ss.Cache.Get(szId)
 	if bFound {
 		oPost = oRst.(map[string]interface{})
+		oPost["urls"] = ss.AddUrls(r.Request.URL.String(), oPost["url"])
 	} else {
-		if 200 != r.StatusCode {
-			oPost["url"] = r.Request.URL.String()
-		} else {
+		if 200 == r.StatusCode {
 			if xx := ss.GetDomainInfo(r.Request.URL.String()); nil != xx {
 				oPost = xx
-			} else {
-				log.Println(r.Request.URL.String())
 			}
+		} else {
+			log.Println(r.StatusCode, r.Request.URL.String())
 		}
+		oPost["urls"] = []string{r.Request.URL.String()}
 		if 0 != r.StatusCode {
-			oPost["id"] = r.Request.AbsoluteURL(r.Request.URL.String())
 			oPost["Headers"] = r.Headers
 			oPost["StatusCode"] = r.StatusCode
 		}
-		ss.Cache.Set(szId, oPost, cache.NoExpiration)
 	}
+	ss.DoNotText(r, &oPost)
+	ss.Cache.Set(szId, oPost, cache.NoExpiration)
 	go ss.SendJsonReq(oPost, szId)
 }
 
