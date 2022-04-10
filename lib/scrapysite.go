@@ -8,11 +8,11 @@ import (
 	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -24,11 +24,14 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
+var nThreads = 16
+
 type ScrapySite struct {
-	Scrapy *colly.Collector
-	Cache  *cache.Cache
-	resUrl string
-	fnCbk  func(string, string, *colly.HTMLElement) bool
+	Scrapy   *colly.Collector
+	Cache    *cache.Cache
+	resUrl   string
+	fnCbk    func(string, string, *colly.HTMLElement) bool
+	EsThreas chan struct{}
 }
 
 // 默认MaxDepth 微0，不受深度限制
@@ -36,10 +39,11 @@ type ScrapySite struct {
 func NewScrapySite(resUrl string, fnCbk func(string, string, *colly.HTMLElement) bool) *ScrapySite {
 	var r *ScrapySite
 	r = &ScrapySite{resUrl: resUrl, fnCbk: fnCbk}
+	r.EsThreas = make(chan struct{}, nThreads*10)
 	r.Cache = cache.New(10000*time.Hour, 10000*time.Hour)
 	r.Scrapy = colly.NewCollector(colly.CacheDir("./coursera_cache"), colly.MaxDepth(0), colly.Async(), colly.AllowURLRevisit(), colly.IgnoreRobotsTxt())
-	r.Scrapy.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 256})
-	extensions.RandomUserAgent(r.Scrapy)
+	r.Scrapy.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: nThreads})
+	// extensions.RandomUserAgent(r.Scrapy)
 	extensions.Referer(r.Scrapy)
 	r.init()
 	return r
@@ -51,15 +55,22 @@ func (r *ScrapySite) GetDomainIps(domain string) (aRst []string) {
 	aRst = []string{}
 	if "" != re.FindString(domain) {
 		aRst = []string{domain}
-		return
-	}
-	ips, err := net.LookupIP(domain)
-	if nil == err {
-		for _, ip := range ips {
-			if ipv4 := ip.To4(); ipv4 != nil {
-				aRst = append(aRst, ipv4.String())
+	} else {
+		oRst, bFound := r.Cache.Get(domain)
+		if bFound {
+			aRst = oRst.([]string)
+			return
+		}
+		log.Println("GetDomainIps", domain)
+		ips, err := net.LookupIP(domain)
+		if nil == err {
+			for _, ip := range ips {
+				if ipv4 := ip.To4(); ipv4 != nil {
+					aRst = append(aRst, ipv4.String())
+				}
 			}
 		}
+		r.Cache.Set(domain, aRst, cache.NoExpiration)
 	}
 	return
 }
@@ -74,16 +85,18 @@ func (r *ScrapySite) GetDomainInfo(url string) map[string]interface{} {
 		oRst := make(map[string]interface{})
 		aRst := r.GetDomainIps(s1)
 		var xxx []map[string]interface{}
-		for _, x := range aRst {
-			xD, err := r.GetIpInfo(x)
-			if nil != err {
-				log.Println(err)
-				continue
-			}
-			if nil != xD {
-				xxx = append(xxx, xD)
-			} else {
-				xxx = append(xxx, map[string]interface{}{"query": x})
+		if 0 < len(aRst) {
+			for _, x := range aRst {
+				xD, err := r.GetIpInfo(x)
+				if nil != err {
+					log.Println(err)
+					continue
+				}
+				if nil != xD {
+					xxx = append(xxx, xD)
+				} else {
+					xxx = append(xxx, map[string]interface{}{"query": x})
+				}
 			}
 		}
 		oRst["ips"] = xxx
@@ -125,7 +138,11 @@ func (ss *ScrapySite) GetIpInfo(ip string) (map[string]interface{}, error) {
 }
 
 func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
-	req, err := http.NewRequest("POST", ss.resUrl+id, data)
+	ss.EsThreas <- struct{}{}
+	defer func() {
+		<-ss.EsThreas
+	}()
+	req, err := http.NewRequest("POST", ss.resUrl+url.QueryEscape(id), data)
 	if err != nil {
 		log.Println(err)
 		return
@@ -138,6 +155,7 @@ func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
 	// keep-alive
 	req.Header.Add("Connection", "close")
 	req.Close = true
+	defer req.Body.Close()
 
 	resp, err := http.DefaultClient.Do(req)
 	if resp != nil {
@@ -147,9 +165,8 @@ func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
 		log.Println("SendReq", ss.resUrl, id, err)
 		return
 	}
-	_, err = io.Copy(ioutil.Discard, resp.Body) // 手动丢弃读取完毕的数据
-	log.Println("Elasticsearch save ok: ", ss.resUrl, id)
-	// defer req.Body.Close()
+	s2, err := ioutil.ReadAll(resp.Body)
+	log.Println("Elasticsearch save ok: ", id, string(s2))
 }
 func (ss *ScrapySite) SendJsonReq(data map[string]interface{}, id string) {
 	jsonValue, err := json.Marshal(data)
@@ -169,22 +186,26 @@ func (ss *ScrapySite) AddUrls(url string, data []string) []string {
 }
 
 // 处理非文本文件
-func (ss *ScrapySite) DoNotText(r *colly.Response, data *map[string]interface{}) {
+func (ss *ScrapySite) DoNotText(r *colly.Response) map[string]interface{} {
 	// 非文本，计算sha1、md5
-	if strings.Index(r.Headers.Get("Content-Type"), "text/") == -1 && 0 < len(r.Body) {
-		md5R, sha1R, sha256R := ss.Hash(r.Body)
-		&data["hash"] = map[string]interface{}{"md5": md5R, "sha1": sha1R, "sha256": sha256R}
-		return
+	if nil != r.Body && strings.Index(r.Headers.Get("Content-Type"), "text/") == -1 && 0 < len(r.Body) {
+		x1 := r.Body
+		md5R, sha1R, sha256R := ss.Hash(x1)
+		return map[string]interface{}{"md5": md5R, "sha1": sha1R, "sha256": sha256R}
 	}
+	return nil
 }
 func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
 	oPost := make(map[string]interface{})
 
 	szId := r.Request.AbsoluteURL(r.Request.URL.String())
+	if "" == szId || 14 > len(szId) {
+		return
+	}
 	oRst, bFound := ss.Cache.Get(szId)
 	if bFound {
 		oPost = oRst.(map[string]interface{})
-		oPost["urls"] = ss.AddUrls(r.Request.URL.String(), oPost["url"])
+		oPost["urls"] = ss.AddUrls(r.Request.URL.String(), oPost["urls"].([]string))
 	} else {
 		if 200 == r.StatusCode {
 			if xx := ss.GetDomainInfo(r.Request.URL.String()); nil != xx {
@@ -199,7 +220,11 @@ func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
 			oPost["StatusCode"] = r.StatusCode
 		}
 	}
-	ss.DoNotText(r, &oPost)
+	x1 := ss.DoNotText(r)
+	if nil != x1 {
+		oPost["hash"] = x1
+	}
+
 	ss.Cache.Set(szId, oPost, cache.NoExpiration)
 	go ss.SendJsonReq(oPost, szId)
 }
@@ -267,7 +292,7 @@ func (ss *ScrapySite) Base64DecodeString2byte(data string) []byte {
 
 func (ss *ScrapySite) OnResponse(onResponse func(r *colly.Response)) {
 	ss.Scrapy.OnResponse(func(r *colly.Response) {
-		go ss.DoResponse2Es(r)
+		ss.DoResponse2Es(r)
 		// r.Ctx.Get("url")
 		onResponse(r)
 		// d := ss.Scrapy.Clone()
@@ -281,6 +306,7 @@ func (ss *ScrapySite) OnRequest(onRequest func(*colly.Request)) {
 	ss.Scrapy.OnRequest(func(r *colly.Request) {
 		// r.Ctx.Put("url", r.URL.String())
 		// log.Println("我的请求", r.URL.String(), r.AbsoluteURL(r.URL.String()), r.Headers.Get("User-Agent"))
+		r.Headers.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.2 Safari/605.1.15")
 		onRequest(r)
 	})
 }
@@ -292,8 +318,8 @@ func (ss *ScrapySite) Start(szUrl string) {
 	url := re.Split(szUrl, -1)
 
 	q, _ := queue.New(
-		256, // Number of consumer threads
-		&queue.InMemoryQueueStorage{MaxSize: 10000}, // Use default queue storage
+		nThreads, // Number of consumer threads
+		&queue.InMemoryQueueStorage{MaxSize: nThreads}, // Use default queue storage
 	)
 	for _, x := range url {
 		q.AddURL(x)
