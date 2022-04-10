@@ -3,13 +3,22 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"regexp"
+	"strings"
 
 	"github.com/gocolly/colly/v2"
 	ss51pwn "github.com/hktalent/scrapysite/lib"
 )
 
-func fnCbk(link, text string) bool {
-	fmt.Printf("Link found: %q -> %s\n", text, link)
+var reg1 = regexp.MustCompile(`^(#|javascript)|(favicon\.ico$)`)
+
+// 请求到url：e.Request.URL.String()
+func fnCbk(link, text string, e *colly.HTMLElement) bool {
+	if "" != reg1.FindString(link) {
+		return false
+	}
+	fmt.Printf("Link found: %s -> %s  %s\n", text, link, e.Request.URL.String())
 	return true
 }
 
@@ -19,11 +28,24 @@ func main() {
 
 	flag.Parse()
 
-	var scrapysite *ss51pwn.ScrapySite
-	scrapysite = ss51pwn.NewScrapySite()
-	scrapysite.OnRequest(func(r *colly.Request) {
-		fmt.Println("Visiting", r.URL.String())
-	})
-	scrapysite.Init(fnCbk)
-	scrapysite.Start(*url)
+	log.Println(*url)
+	if "" != *url {
+		var scrapysite *ss51pwn.ScrapySite
+		scrapysite = ss51pwn.NewScrapySite()
+		scrapysite.OnRequest(func(r *colly.Request) {
+			// fmt.Println("Visiting", r.URL.String())
+		})
+		scrapysite.OnResponse(func(r *colly.Response) {
+			// 非文本，计算sha1、md5
+			if strings.Index(r.Headers.Get("Content-Type"), "text/") == -1 {
+				r.Save("./xx/" + r.FileName())
+				return
+			}
+		})
+		scrapysite.Init(fnCbk)
+		scrapysite.Start(*url)
+
+		// md5R, sha1R, sha256R := scrapysite.Hash([]byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"))
+		// log.Println(md5R, sha1R, sha256R)
+	}
 }
