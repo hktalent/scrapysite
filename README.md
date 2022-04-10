@@ -70,7 +70,9 @@ Content-Length: 291
 }
 ```
 http://127.0.0.1:9200/st_index/_doc/
+
 # how use
 ```bash
 ./main -url="http://www.xxx1.cn;http://www.xx2.cn" -resUrl="http://127.0.0.1:9200/st_index/_doc/"
 ```
+http://127.0.0.1:9200/st_index/_search?q=edu&pretty=true
