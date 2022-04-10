@@ -19,10 +19,11 @@ type ScrapySite struct {
 }
 
 // 默认MaxDepth 微0，不受深度限制
+// default: IgnoreRobotsTxt
 func NewScrapySite() *ScrapySite {
 	var r *ScrapySite
 	r = &ScrapySite{}
-	r.Scrapy = colly.NewCollector(colly.CacheDir("./coursera_cache"), colly.MaxDepth(0), colly.Async(), colly.AllowURLRevisit())
+	r.Scrapy = colly.NewCollector(colly.CacheDir("./coursera_cache"), colly.MaxDepth(0), colly.Async(), colly.AllowURLRevisit(), colly.IgnoreRobotsTxt())
 	r.Scrapy.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 256})
 	return r
 }
@@ -41,7 +42,7 @@ func (ss *ScrapySite) SetProxys(proxys []string) {
 func (ss *ScrapySite) Init(fnCbk func(string, string, *colly.HTMLElement) bool) {
 	// Cache responses to prevent multiple download of pages
 	// even if the collector is restarted
-	ss.Scrapy.OnHTML("*[href]", func(e *colly.HTMLElement) {
+	ss.Scrapy.OnHTML("*[href],*[src]", func(e *colly.HTMLElement) {
 		link := e.Attr("href")
 		if fnCbk(link, strings.TrimSpace(e.Text), e) {
 			// requestIDURL := e.Request.AbsoluteURL(e.ChildAttr(`link[as="script"]`, "href"))
