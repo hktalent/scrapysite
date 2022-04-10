@@ -14,6 +14,12 @@ import (
 var reg1 = regexp.MustCompile(`^(#|javascript)|(favicon\.ico$)`)
 
 // 请求到url：e.Request.URL.String()
+// e.Request: URL,Headers,Depth,Method,ResponseCharacterEncoding,
+// e.Response:
+// StatusCode
+// Body
+// Request
+// Headers
 func fnCbk(link, text string, e *colly.HTMLElement) bool {
 	if "" != reg1.FindString(link) {
 		return false
