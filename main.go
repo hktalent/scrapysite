@@ -1,10 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 
-	"github.com/gocolly/colly"
-	scrapysite "github.com/hktalent/scrapysite/lib"
+	"github.com/gocolly/colly/v2"
+	ss51pwn "github.com/hktalent/scrapysite/lib"
 )
 
 func fnCbk(link, text string) bool {
@@ -13,11 +14,16 @@ func fnCbk(link, text string) bool {
 }
 
 func main() {
-	var scrapysite *scrapysite.Scrapysite
-	scrapysite = scrapysite.NewScrapysite()
+
+	url := flag.String("url", "", "scrapy url")
+
+	flag.Parse()
+
+	var scrapysite *ss51pwn.ScrapySite
+	scrapysite = ss51pwn.NewScrapySite()
 	scrapysite.OnRequest(func(r *colly.Request) {
 		fmt.Println("Visiting", r.URL.String())
 	})
 	scrapysite.Init(fnCbk)
-	scrapysite.Visit("http://www.xxx.cn/")
+	scrapysite.Start(*url)
 }

@@ -40,13 +40,15 @@ func (ss *ScrapySite) OnResponse(onResponse func(r *colly.Response) bool) {
 		// d := ss.Scrapy.Clone()
 		// d.Request("GET", u, nil, ctx, nil)
 	})
-
 }
 
 // https://github.com/gocolly/colly/blob/b151a08fbde2b67d960bd9991c1f346e5a1cdd77/_examples/instagram/instagram.go#L94
-func (ss *ScrapySite) OnRequest(onRequest func(r *colly.Request) bool) {
+func (ss *ScrapySite) OnRequest(onRequest func(*colly.Request)) {
 	ss.Scrapy.OnRequest(func(r *colly.Request) {
 		onRequest(r)
 	})
+}
 
+func (ss *ScrapySite) Start(url string) {
+	ss.Scrapy.Visit(url)
 }
