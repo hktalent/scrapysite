@@ -18,29 +18,50 @@ import (
 	"time"
 
 	"github.com/gocolly/colly/v2"
+
 	// "github.com/gocolly/colly/v2/extensions"
+	"github.com/allegro/bigcache/v3"
 	"github.com/gocolly/colly/v2/proxy"
 	"github.com/gocolly/colly/v2/queue"
-	"github.com/patrickmn/go-cache"
 )
 
 var nThreads = 16
-var Cache *cache.Cache
+var Cache *bigcache.BigCache
+var EsThreas = make(chan struct{}, nThreads*10)
 
 type ScrapySite struct {
-	Scrapy   *colly.Collector
-	resUrl   string
-	fnCbk    func(string, string, *colly.HTMLElement) bool
-	EsThreas chan struct{}
+	Scrapy *colly.Collector
+	resUrl string
+	fnCbk  func(string, string, *colly.HTMLElement) bool
+}
+
+func GetCache(k string) (interface{}, error) {
+	s, err := Cache.Get(k)
+	if nil == err {
+		aB := []byte(s)
+		var aRs interface{}
+		json.Unmarshal(aB, &aRs)
+		return aRs, nil
+	}
+	return nil, err
+}
+
+func SetCache(k string, o interface{}) {
+	b, err := json.Marshal(o)
+	if nil == err {
+		Cache.Set(k, b)
+	}
+
 }
 
 // 默认MaxDepth 微0，不受深度限制
 // default: IgnoreRobotsTxt
 func NewScrapySite(resUrl string, fnCbk func(string, string, *colly.HTMLElement) bool) *ScrapySite {
-	Cache = cache.New(10000*time.Hour, 10000*time.Hour)
+	// Cache = cache.New(10000*time.Hour, 10000*time.Hour)
+	Cache1, _ := bigcache.NewBigCache(bigcache.DefaultConfig(10 * time.Minute))
+	Cache = Cache1
 	var r *ScrapySite
 	r = &ScrapySite{resUrl: resUrl, fnCbk: fnCbk}
-	r.EsThreas = make(chan struct{}, nThreads*10)
 	// Cache = cache.New(10000*time.Hour, 10000*time.Hour)
 	r.Scrapy = colly.NewCollector(colly.CacheDir("./coursera_cache"), colly.MaxDepth(0), colly.Async(), colly.AllowURLRevisit(), colly.IgnoreRobotsTxt())
 	r.Scrapy.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: nThreads})
@@ -50,6 +71,14 @@ func NewScrapySite(resUrl string, fnCbk func(string, string, *colly.HTMLElement)
 	return r
 }
 
+func I2S(data []interface{}) []string {
+	a := []string{}
+	for _, j := range data {
+		a = append(a, fmt.Sprintf("%v", j))
+	}
+	return a
+}
+
 // 获取domain的所有ip地址
 func (r *ScrapySite) GetDomainIps(domain string) (aRst []string) {
 	re := regexp.MustCompile(`^(\d{1,3}\.){3}\d{1,3}$`)
@@ -57,9 +86,9 @@ func (r *ScrapySite) GetDomainIps(domain string) (aRst []string) {
 	if "" != re.FindString(domain) {
 		aRst = []string{domain}
 	} else {
-		oRst, bFound := Cache.Get(domain)
-		if bFound {
-			aRst = oRst.([]string)
+		oRst, err := GetCache(domain)
+		if err == nil && nil != oRst {
+			aRst = I2S(oRst.([]interface{}))
 			return
 		}
 		log.Println("GetDomainIps", domain)
@@ -71,7 +100,7 @@ func (r *ScrapySite) GetDomainIps(domain string) (aRst []string) {
 				}
 			}
 		}
-		Cache.Set(domain, aRst, cache.NoExpiration)
+		SetCache(domain, aRst)
 	}
 	return
 }
@@ -107,8 +136,8 @@ func (r *ScrapySite) GetDomainInfo(url string) map[string]interface{} {
 }
 
 func (ss *ScrapySite) GetIpInfo(ip string) (map[string]interface{}, error) {
-	oRst, bFound := Cache.Get(ip)
-	if bFound {
+	oRst, err := GetCache(ip)
+	if nil == err {
 		return oRst.(map[string]interface{}), nil
 	}
 	req, err := http.NewRequest("GET", "http://ip-api.com/json/"+ip, nil)
@@ -134,14 +163,14 @@ func (ss *ScrapySite) GetIpInfo(ip string) (map[string]interface{}, error) {
 	}
 	var rst map[string]interface{}
 	json.Unmarshal(body, &rst)
-	Cache.Set(ip, rst, cache.NoExpiration)
+	SetCache(ip, rst)
 	return rst, nil
 }
 
 func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
-	ss.EsThreas <- struct{}{}
+	EsThreas <- struct{}{}
 	defer func() {
-		<-ss.EsThreas
+		<-EsThreas
 	}()
 	req, err := http.NewRequest("POST", ss.resUrl+url.QueryEscape(id), data)
 	if err != nil {
@@ -177,13 +206,14 @@ func (ss *ScrapySite) SendJsonReq(data map[string]interface{}, id string) {
 }
 
 // 添加不重复url
-func (ss *ScrapySite) AddUrls(url string, data []string) []string {
-	for _, x := range data {
+func (ss *ScrapySite) AddUrls(url string, data []interface{}) []string {
+	a := I2S(data)
+	for _, x := range a {
 		if x == url {
-			return data
+			return a
 		}
 	}
-	return append(data, url)
+	return append(a, url)
 }
 
 // 处理非文本文件
@@ -196,6 +226,7 @@ func (ss *ScrapySite) DoNotText(r *colly.Response) map[string]interface{} {
 	}
 	return nil
 }
+
 func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
 	oPost := make(map[string]interface{})
 
@@ -203,10 +234,12 @@ func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
 	if "" == szId || 14 > len(szId) {
 		return
 	}
-	oRst, bFound := Cache.Get(szId)
-	if bFound {
+	oRst, err := GetCache(szId)
+	if nil == err && nil != oRst {
 		oPost = oRst.(map[string]interface{})
-		oPost["urls"] = ss.AddUrls(r.Request.URL.String(), oPost["urls"].([]string))
+		// spew.Dump(oPost["urls"])
+		// interface conversion: interface {} is []interface {}, not []string
+		oPost["urls"] = ss.AddUrls(r.Request.URL.String(), oPost["urls"].([]interface{}))
 	} else {
 		if 200 == r.StatusCode {
 			if xx := ss.GetDomainInfo(r.Request.URL.String()); nil != xx {
@@ -220,8 +253,8 @@ func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
 			xh := r.Headers
 			oPost["Headers"] = xh
 			oPost["StatusCode"] = r.StatusCode
-			szTt, bF := Cache.Get(r.Request.URL.String() + "_title")
-			if bF && "" != szTt.(string) {
+			szTt, err := GetCache(r.Request.URL.String() + "_title")
+			if nil == err && "" != szTt.(string) {
 				oPost["title"] = szTt.(string)
 			}
 
@@ -232,8 +265,8 @@ func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
 		oPost["hash"] = x1
 	}
 
-	Cache.SetDefault(szId, oPost)
-	ss.SendJsonReq(oPost, szId)
+	SetCache(szId, oPost)
+	go ss.SendJsonReq(oPost, szId)
 }
 
 func (ss *ScrapySite) SetProxys(proxys []string) {
@@ -259,7 +292,7 @@ func (ss *ScrapySite) init() {
 		title := strings.TrimSpace(e.Text)
 		if ss.fnCbk(link, title, e) {
 			if "" != title {
-				Cache.SetDefault(link+"_title", title)
+				SetCache(link+"_title", title)
 			}
 			e.Request.Visit(link)
 			// if !strings.HasPrefix(link, "http") {
