@@ -19,7 +19,7 @@ type ScrapyRule struct {
 type Config struct {
 	SqliteDbName          string        `json:"sqliteDbName"`          // "./db/results.db"
 	EsUrl                 string        `json:"esUrl"`                 // Elasticsearch url, http://127.0.0.1:9200/scrapy_index/_doc/
-	CacheDir              string        `json:"cacheDir"`              // ./coursera_cache
+	CacheDir              string        `json:"cacheDir"`              // ./db/coursera_cache
 	DnsDbCache            string        `json:"dnsDbCache"`            // ./db/dnsDbCache
 	EsCacheName           string        `json:"esCacheName"`           // ./db/EsCache
 	Timeout               time.Duration `json:"timeout"`               // default 30s
@@ -42,7 +42,7 @@ type Config struct {
 var DefaultBindConf = Config{
 	Verbose:               false,
 	SqliteDbName:          "./db/results.db",
-	CacheDir:              "./coursera_cache",
+	CacheDir:              "./db/coursera_cache",
 	DnsDbCache:            "./db/dnsDbCache",
 	EsCacheName:           "./db/EsCache",
 	Timeout:               30,
