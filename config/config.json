@@ -1,0 +1,21 @@
+{
+  "verbose":               false,
+  "cacheDir":              "./db/coursera_cache",
+  "dnsDbCache":            "./db/dnsDbCache",
+  "esCacheName":           "./db/EsCache",
+  "sqliteDbName":          "./db/results.db",
+  "timeout":               30,
+  "keepAlive":             10,
+  "maxIdleConns":          100,
+  "idleConnTimeout":       90,
+  "TLSHandshakeTimeout":   10,
+  "expectContinueTimeout": 1,
+  "threadNum":             16,
+  "domainGlob":            "*",
+  "randomDelay":           15,
+  "esUrl":                 "http://127.0.0.1:9200/scrapy_index/_doc/",
+  "getIpUrlFormat":        "http://ip-api.com/json/%s",
+  "ipRegs":                ["^(\\d{1,3}\\.){3}\\d{1,3}$"],
+  "filterHrefReg":         ["^(#|javascript|mailto:)|(favicon\\.ico$)"],
+  "scrapyRule":            []
+}

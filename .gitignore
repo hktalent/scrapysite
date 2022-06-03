@@ -4,6 +4,8 @@
 *.dll
 *.so
 *.dylib
+dnsDbCache
+db/*
 
 # Test binary, built with `go test -c`
 .DS_Store
