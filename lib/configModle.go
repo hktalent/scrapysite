@@ -1,9 +1,11 @@
 package lib
 
 import (
+	"bufio"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 	"log"
+	"os"
 	"time"
 )
 
@@ -67,10 +69,23 @@ func FnLog(x ...any) {
 	}
 }
 
+var ConfigName string
+
 // init config
-func init() {
-	viper.AddConfigPath("./config")
-	viper.AddConfigPath("$HOME")
+func Init() {
+	var bRd = false
+	if "" != ConfigName {
+		file, err := os.Open(ConfigName)
+		if nil == err {
+			defer file.Close()
+			viper.ReadConfig(bufio.NewReader(file))
+			bRd = true
+		}
+	}
+	if !bRd {
+		viper.AddConfigPath("./config")
+		viper.AddConfigPath("$HOME")
+	}
 	err := viper.ReadInConfig() // 查找并读取配置文件
 	if err != nil {             // 处理读取配置文件的错误
 		FnLog(err)

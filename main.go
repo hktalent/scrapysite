@@ -1,29 +1,18 @@
 package main
 
 import (
+	"flag"
 	"strings"
 
 	"github.com/gocolly/colly/v2"
 	ss51pwn "github.com/hktalent/scrapysite/lib"
 )
 
-// 请求到url：e.Request.URL.String()
-// e.Request: URL,Headers,Depth,Method,ResponseCharacterEncoding,
-// e.Response:
-// StatusCode
-// Body
-// Request
-// Headers
-func fnCbk(link, text string, e interface{}) bool {
-	szUrl := link // e.Request.URL.String()
-	if -1 < strings.Index(szUrl, "https://seo.chinaz.com/") {
-		return true
-	}
-
-	return false
-}
-
 func main() {
+	flag.StringVar(&ss51pwn.ConfigName, "config", "", "config file name")
+	flag.Parse()
+	ss51pwn.Init()
+
 	var scrapysite = ss51pwn.NewScrapySite()
 	scrapysite.OnRequest(func(r *colly.Request) {
 		//fmt.Println("Visiting", r.URL.String())
