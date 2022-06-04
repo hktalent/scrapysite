@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	flag.StringVar(&ss51pwn.ConfigName, "config", "", "config file name")
+	flag.StringVar(&ss51pwn.ConfigName, "config", "./config.json", "config file name")
 	flag.Parse()
 	ss51pwn.Init()
 
@@ -28,5 +28,6 @@ func main() {
 	// spew.Dump(scrapysite.GetDomainInfo("http://www.gov.cn"))
 	// md5R, sha1R, sha256R := scrapysite.Hash([]byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"))
 	// log.Println(md5R, sha1R, sha256R)
+	select {}
 
 }

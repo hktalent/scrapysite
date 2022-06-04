@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	// "github.com/gocolly/colly/v2/extensions"
@@ -39,15 +40,14 @@ type ScrapySite struct {
 }
 
 // 获取缓存
-func GetCache(k string) (interface{}, error) {
+func GetCache[T any](k string) (T, error) {
 	s, err := Cache.Get(k)
+	var aRs T
 	if nil == err {
-		aB := []byte(s)
-		var aRs interface{}
-		json.Unmarshal(aB, &aRs)
+		json.Unmarshal(s, &aRs)
 		return aRs, nil
 	}
-	return nil, err
+	return aRs, err
 }
 
 // 设置缓存
@@ -60,17 +60,22 @@ func SetCache(k string, o interface{}) {
 
 // 回调决定是否继续请求url
 // 链接、标题、选择器,正则，对象
-func (r *ScrapySite) CallBack(link, title string, regUrl string, regTitle string, i interface{}) bool {
+func (r *ScrapySite) CallBack(link, title string, regUrl []string, regTitle string, i interface{}) bool {
 	szUrl := link // e.Request.URL.String()
 	// 过滤
 	if r.FilterHref(szUrl) {
 		return false
 	}
-	if "" != regUrl {
-		r1, err := regexp.Compile(regUrl)
-		if nil == err {
-			if 0 < len(r1.FindAllString(szUrl, -1)) {
-				return true
+	if 0 <= len(regUrl) {
+		for _, j := range regUrl {
+			r1, err := regexp.Compile(j)
+			if nil == err {
+				if 0 < len(r1.FindAllString(szUrl, -1)) {
+					//FnLog("CallBack: ", title, link)
+					return true
+				}
+			} else {
+				FnLog("CallBack: ", title, link, j, err)
 			}
 		}
 	}
@@ -78,10 +83,14 @@ func (r *ScrapySite) CallBack(link, title string, regUrl string, regTitle string
 		r1, err := regexp.Compile(regTitle)
 		if nil == err {
 			if 0 < len(r1.FindAllString(title, -1)) {
+				//FnLog("CallBack: ", title, link)
 				return true
 			}
+		} else {
+			FnLog("CallBack: ", title, link, regTitle, err)
 		}
 	}
+	//FnLog("CallBack: ", title, link, regUrl)
 	return false
 }
 func (r *ScrapySite) FilterHref(s string) bool {
@@ -134,35 +143,31 @@ func NewScrapySite() *ScrapySite {
 	return r
 }
 
-// ips 转字符串数组
-func I2S(data []interface{}) []string {
-	a := []string{}
-	for _, j := range data {
-		a = append(a, fmt.Sprintf("%v", j))
-	}
-	return a
-}
-
 // 获取domain的所有ip地址
 // 注意：一个域名可能解析出多个ip
 func (r *ScrapySite) GetDomainIps(domain string) (aRst []string) {
 	for _, x := range DefaultBindConf.IpRegs {
 		re := regexp.MustCompile(x)
 		aRst = []string{}
+		// 找到了，说明是ip，就不在转换，直接返回
 		if "" != re.FindString(domain) {
 			aRst = []string{domain}
 		} else {
-			oRst, err := GetCache(domain)
-			if err == nil && nil != oRst {
-				aRst = I2S(oRst.([]interface{}))
+			oRst, err := GetCache[[]string](domain)
+			// 有缓存,且有效、有数据
+			if err == nil && nil != oRst && 0 < len(oRst) {
+				aRst = oRst
 				return
 			}
+			// bug: 如果第一次没有获取到ip，后续非一直获取
 			ips, err := net.LookupIP(domain)
 			if nil == err {
 				for _, ip := range ips {
 					if ipv4 := ip.To4(); ipv4 != nil {
 						aRst = append(aRst, ipv4.String())
-						//go SetCache(ipv4.String(), domain)
+					}
+					if ipv4 := ip.To16(); ipv4 != nil {
+						aRst = append(aRst, ipv4.String())
 					}
 				}
 				if 0 < len(aRst) {
@@ -175,15 +180,19 @@ func (r *ScrapySite) GetDomainIps(domain string) (aRst []string) {
 }
 
 // 获取url的domain对应的ip，及ip归宿信息
-func (r *ScrapySite) GetDomainInfo(url string) map[string]interface{} {
-	s1 := "://"
-	if -1 < strings.Index(url, s1) {
-		s := strings.Split(url, s1)[1]
-		re := regexp.MustCompile(`[;,\?\/:# ]`)
-		s1 = re.Split(s, -1)[0]
-		var oRst = make(map[string]interface{})
-		aRst := r.GetDomainIps(s1)
-		var xxx []map[string]interface{} = []map[string]interface{}{}
+func (r *ScrapySite) GetDomainInfo(szUrl string, result *Result) []IpInfo {
+	var aR = []IpInfo{}
+	var domain string
+	oUrl, err := url.Parse(szUrl)
+	if nil != err {
+		FnLog(err)
+		return aR
+	}
+	domain = oUrl.Host
+	FnLog("GetDomainInfo domain: ", domain)
+	if "" != domain {
+		result.IpInfo = aR
+		aRst := r.GetDomainIps(domain)
 		if 0 < len(aRst) {
 			for _, x := range aRst {
 				xD, err := r.GetIpInfo(x)
@@ -192,26 +201,22 @@ func (r *ScrapySite) GetDomainInfo(url string) map[string]interface{} {
 					continue
 				}
 				if nil != xD {
-					xxx = append(xxx, xD)
+					aR = append(aR, *xD)
 				} else { // 没有找到，或者网络异常的情况
-					xxx = append(xxx, map[string]interface{}{"query": x})
+					aR = append(aR, IpInfo{Query: x})
 				}
 			}
 		}
-		oRst["ips"] = xxx
-		return oRst
+		return aR
 	}
-	return nil
+	return aR
 }
 
 // 获取ip归宿信息
-func (ss *ScrapySite) GetIpInfo(ip string) (map[string]interface{}, error) {
-	oRst, err := GetCache(ip)
+func (ss *ScrapySite) GetIpInfo(ip string) (*IpInfo, error) {
+	oRst, err := GetCache[IpInfo](ip)
 	if nil == err {
-		x1, ok := oRst.(map[string]interface{})
-		if ok {
-			return x1, nil
-		}
+		return &oRst, nil
 	}
 	getIpThread <- struct{}{}
 	defer func() {
@@ -219,6 +224,7 @@ func (ss *ScrapySite) GetIpInfo(ip string) (map[string]interface{}, error) {
 	}()
 	req, err := http.NewRequest("GET", fmt.Sprintf(DefaultBindConf.GetIpUrlFormat, ip), nil)
 	if err != nil {
+		FnLog("GetIpInfo NewRequest ", err)
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "curl/11")
@@ -232,20 +238,25 @@ func (ss *ScrapySite) GetIpInfo(ip string) (map[string]interface{}, error) {
 		defer resp.Body.Close() // resp 可能为 nil，不能读取 Body
 	}
 	if err != nil {
+		FnLog("GetIpInfo DefaultClient ", err)
 		return nil, err
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if nil != err {
+		FnLog("GetIpInfo ReadAll ", err)
 		return nil, err
 	}
-	var rst map[string]interface{}
-	json.Unmarshal(body, &rst)
-	SetCache(ip, rst)
-	return rst, nil
+	var rst IpInfo
+	err = json.Unmarshal(body, &rst)
+	if nil == err {
+		SetCache(ip, rst)
+	} else {
+		FnLog("GetIpInfo Unmarshal ", err)
+	}
+	return &rst, err
 }
 
 //var esCache = NewKvDbOp("EsCache")
-
 // 指定id发送数据到ES url，，data为json转换后到数据
 func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
 	EsThreas <- struct{}{}
@@ -263,6 +274,7 @@ func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
 		FnLog(err)
 		return
 	}
+	//FnLog(data.String())
 	// 取消全局复用连接
 	// tr := http.Transport{DisableKeepAlives: true}
 	// client := http.Client{Transport: &tr}
@@ -284,23 +296,27 @@ func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
 	s2, err := ioutil.ReadAll(resp.Body)
 	if nil == err {
 		FnLog("Elasticsearch save ok: ", id, string(s2))
+	} else {
+		FnLog("Elasticsearch save err: ", id, err)
 	}
 }
 
 // 发送man到ES
-func (ss *ScrapySite) SendJsonReq(data map[string]interface{}, id string) {
-	jsonValue, err := json.Marshal(data)
+func (ss *ScrapySite) SendJsonReq(data *Result, id string) {
+	jsonValue, err := json.Marshal(*data)
 	if nil == err {
 		ss.SendReq(bytes.NewBuffer(jsonValue), id)
+	} else {
+		FnLog("SendJsonReq", err)
 	}
 }
 
 // 添加不重复url
-func (ss *ScrapySite) AddUrls(url string, data []interface{}) []string {
-	a := I2S(data)
+func (ss *ScrapySite) AddUrls(url string, data []string) []string {
+	a := data
 	for _, x := range a {
 		if x == url {
-			return a
+			return data
 		}
 	}
 	return append(a, url)
@@ -308,72 +324,68 @@ func (ss *ScrapySite) AddUrls(url string, data []interface{}) []string {
 
 // 处理非文本文件
 // 计算md5、sha1、sha256 到map
-func (ss *ScrapySite) DoNotText4Parms(body []byte, ContentType string) map[string]interface{} {
+func (ss *ScrapySite) DoNotText4Parms(body []byte, ContentType string, r *Result) {
 	// 非文本，计算sha1、md5
 	if nil != body {
 		if strings.Index(ContentType, "text/") == -1 && 0 < len(body) {
 			x1 := body
 			md5R, sha1R, sha256R := ss.Hash(x1)
-			return map[string]interface{}{"md5": md5R, "sha1": sha1R, "sha256": sha256R}
+			r.Md5 = md5R
+			r.Sha1 = sha1R
+			r.Sha256 = sha256R
 		}
 	}
-	return nil
 }
 
 // 处理非文本文件
 // 计算md5、sha1、sha256 到map
-func (ss *ScrapySite) DoNotText(r *colly.Response) map[string]interface{} {
-	return ss.DoNotText4Parms(r.Body, r.Headers.Get("Content-Type"))
+func (ss *ScrapySite) DoNotText(r *colly.Response, result *Result) {
+	ss.DoNotText4Parms(r.Body, r.Headers.Get("Content-Type"), result)
 }
 
-func (ss *ScrapySite) DoResponseMap(absUrl, url, ContentType string, StatusCode int, body []byte) {
-	oPost := make(map[string]interface{})
-
-	szId := absUrl
-	if "" == szId || 14 > len(szId) {
-		return
+func (ss *ScrapySite) DoExtractors(r *Result, body []byte, x1 *ScrapyRule, e *colly.HTMLElement) {
+	if nil != e && nil != x1 && nil != r && nil != body && 0 < len(body) {
+		szB := string(body)
+		aRstE := []string{}
+		for _, j := range x1.Extractors {
+			r1, err := regexp.Compile(j)
+			if nil != err {
+				FnLog(j)
+				continue
+			}
+			aR1 := r1.FindAllString(szB, -1)
+			if nil != aR1 && 0 < len(aR1) {
+				aRstE = append(aRstE, aR1...)
+			}
+		}
+		if 0 < len(aRstE) {
+			FnLog("DoExtractors ", aRstE)
+			r.Results = aRstE
+		}
 	}
-	oRst, err := GetCache(szId)
-	if nil == err && nil != oRst {
-		oPost = oRst.(map[string]interface{})
-		// spew.Dump(oPost["urls"])
-		// interface conversion: interface {} is []interface {}, not []string
-		oPost["urls"] = ss.AddUrls(url, oPost["urls"].([]interface{}))
+}
+
+func (ss *ScrapySite) DoResponseMap(absUrl, url, ContentType string, StatusCode int, body []byte, x1 *ScrapyRule, e *colly.HTMLElement) {
+	var result = Result{Url: url}
+	oRst, err := GetCache[Result](url)
+	if nil == err {
+		result = oRst
 	} else {
-		// 对于爬虫而言，非安全检测一类到，只有200有意义，如果是安全检测，非200的也非常有意义
-		if 200 == StatusCode {
-			if xx := ss.GetDomainInfo(url); nil != xx {
-				oPost = xx
-			}
-		} else {
-			FnLog(StatusCode, url)
+		if xx := ss.GetDomainInfo(url, &result); 0 < len(xx) {
+			result.IpInfo = xx
 		}
-		oPost["urls"] = []string{url}
-		if 0 != StatusCode {
-			//xh := r.Headers
-			//oPost["Headers"] = xh
-			//oPost["StatusCode"] = r.StatusCode
-			szTt, err := GetCache(url + "_title")
-			if nil == err && "" != szTt.(string) {
-				oPost["title"] = szTt.(string)
-			}
-		}
-	}
-	x1 := ss.DoNotText4Parms(body, ContentType)
-	if nil != x1 {
-		oPost["hash"] = x1
-	} else if nil != body && 0 < len(body) {
-		oPost["body"] = string(body)
 	}
 
-	SetCache(szId, oPost)
-	go ss.SendJsonReq(oPost, szId)
+	ss.DoExtractors(&result, body, x1, e)
+	ss.DoNotText4Parms(body, ContentType, &result)
+	SetCache(url, result)
+	go ss.SendJsonReq(&result, url)
 }
 
 // 处理请求响应，并转换为ES需要到结构
 // id长度不能小雨14
-func (ss *ScrapySite) DoResponse2Es(r *colly.Response) {
-	ss.DoResponseMap(r.Request.AbsoluteURL(r.Request.URL.String()), r.Request.URL.String(), r.Headers.Get("Content-Type"), r.StatusCode, r.Body)
+func (ss *ScrapySite) DoResponse2Es(r *colly.Response, x1 *ScrapyRule, e *colly.HTMLElement) {
+	ss.DoResponseMap(r.Request.AbsoluteURL(r.Request.URL.String()), r.Request.URL.String(), r.Headers.Get("Content-Type"), r.StatusCode, r.Body, x1, e)
 }
 
 func (ss *ScrapySite) SetProxys(proxys []string) {
@@ -384,36 +396,42 @@ func (ss *ScrapySite) SetProxys(proxys []string) {
 	ss.Scrapy.SetProxyFunc(rp)
 }
 
+var doOnce sync.Once
+
 // 请求到url：e.Request.URL.String()
 // https://github.com/gocolly/colly/blob/master/_examples/multipart/multipart.go
 // e.Request.PostMultipart("http://localhost:8080/", generateFormData())
 func (ss *ScrapySite) init() {
-	for _, x := range DefaultBindConf.ScrapyRule {
-		func(x1 ScrapyRule) {
-			ss.Scrapy.OnHTML(x1.Selector, func(e *colly.HTMLElement) {
-				link := e.Attr("href")
-				title := strings.TrimSpace(e.Text)
-				if "" != title {
-					SetCache(link+"_title", title)
+	doOnce.Do(func() {
+		if nil != DefaultBindConf.Proxys && 0 < len(DefaultBindConf.Proxys) {
+			ss.SetProxys(DefaultBindConf.Proxys)
+		}
+		ss.Scrapy.OnResponse(func(r *colly.Response) {
+			ss.DoResponse2Es(r, nil, nil)
+		})
+		// 爬虫规则
+		for _, x := range DefaultBindConf.ScrapyRule {
+			func(x1 ScrapyRule) {
+				for _, j := range x1.Selector {
+					ss.Scrapy.OnHTML(j, func(e *colly.HTMLElement) {
+						link := e.Attr("href")
+						title := strings.TrimSpace(e.Text)
+						if ss.CallBack(link, title, x1.CbkUrlReg, x1.CbkTitleReg, e) {
+							ss.DoResponse2Es(e.Response, &x1, e)
+							FnLog("start : ", link)
+							SetCache(link, Result{Url: link, Title: title})
+							e.Request.Visit(link)
+						}
+					})
 				}
-				if ss.CallBack(link, title, x1.CbkUrlReg, x1.CbkTitleReg, e) {
-					e.Request.Visit(link)
-					// if !strings.HasPrefix(link, "http") {
-					// } else {
-					// 	// FnLog("xxx:", e.Request.AbsoluteURL("")
-					// 	ss.Scrapy.Visit(link)
-					// }
-				}
-			})
-		}(x)
-	}
-
-	// Set error handler
-	ss.Scrapy.OnError(func(r *colly.Response, err error) {
-		ss.DoResponse2Es(r)
-		fmt.Println("Request URL:", r.Request.URL, "failed with response:", "Error:", err)
+			}(x)
+		}
+		// Set error handler
+		ss.Scrapy.OnError(func(r *colly.Response, err error) {
+			ss.DoResponse2Es(r, nil, nil)
+			fmt.Println("Request URL:", r.Request.URL, "failed with response:", "Error:", err)
+		})
 	})
-
 }
 
 // 求hash md5,sha1,sha256,SM3: 国密hash算法库
@@ -443,7 +461,6 @@ func (ss *ScrapySite) Base64DecodeString2byte(data string) []byte {
 // 注册处理响应数据的回调
 func (ss *ScrapySite) OnResponse(onResponse func(r *colly.Response)) {
 	ss.Scrapy.OnResponse(func(r *colly.Response) {
-		ss.DoResponse2Es(r)
 		// r.Ctx.Get("url")
 		onResponse(r)
 		// d := ss.Scrapy.Clone()

@@ -1,5 +1,5 @@
 {
-  "verbose":               false,
+  "verbose":               true,
   "cacheDir":              "./db/coursera_cache",
   "dnsDbCache":            "./db/dnsDbCache",
   "esCacheName":           "./db/EsCache",
@@ -17,5 +17,11 @@
   "getIpUrlFormat":        "http://ip-api.com/json/%s",
   "ipRegs":                ["^(\\d{1,3}\\.){3}\\d{1,3}$"],
   "filterHrefReg":         ["^(#|javascript|mailto:)|(favicon\\.ico$)"],
-  "scrapyRule":            []
+  "scrapyRule":            [
+    {
+      "startUrls": ["https://seo.chinaz.com/peiwenxuexiao.com","https://seo.chinaz.com/chengdu.gov.cn"],
+      "selector": ["div ._chinaz-seo-latelyc a"],
+      "cbkUrlReg": ["\\/\\/seo\\.chinaz\\.com\\/.{3,}"],
+      "extractors": ["div ._chinaz-seo-latelyc a"]
+    }]
 }

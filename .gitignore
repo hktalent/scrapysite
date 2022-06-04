@@ -6,6 +6,7 @@
 *.dylib
 dnsDbCache
 db/*
+./config.json
 
 # Test binary, built with `go test -c`
 .DS_Store
