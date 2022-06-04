@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+type ExtractorMod struct {
+	Reg  string `json:"reg"`
+	Type string `json:"type"` // url,body
+}
+
 type IpInfo struct {
 	Continent     string  `json:"continent,omitempty"`
 	ContinentCode string  `json:"continentCode,omitempty"`
@@ -43,11 +48,11 @@ type Result struct {
 
 // 爬虫规则
 type ScrapyRule struct {
-	StartUrls   []string `json:"startUrls"`   // 开始爬取到urls
-	Selector    []string `json:"selector"`    // jQuery's stateful manipulation functions https://github.com/PuerkitoBio/goquery
-	CbkUrlReg   []string `json:"cbkUrlReg"`   // Callback url regexp
-	CbkTitleReg string   `json:"cbkTitleReg"` // Callback title regexp
-	Extractors  []string `json:"extractors"`  // result extractors
+	StartUrls   []string       `json:"startUrls"`   // 开始爬取到urls
+	Selector    []string       `json:"selector"`    // jQuery's stateful manipulation functions https://github.com/PuerkitoBio/goquery
+	CbkUrlReg   []string       `json:"cbkUrlReg"`   // Callback url regexp
+	CbkTitleReg string         `json:"cbkTitleReg"` // Callback title regexp
+	Extractors  []ExtractorMod `json:"extractors"`  // result extractors
 }
 
 // 整体配置

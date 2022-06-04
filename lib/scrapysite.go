@@ -189,7 +189,7 @@ func (r *ScrapySite) GetDomainInfo(szUrl string, result *Result) []IpInfo {
 		return aR
 	}
 	domain = oUrl.Host
-	FnLog("GetDomainInfo domain: ", domain)
+	//FnLog("GetDomainInfo domain: ", domain)
 	if "" != domain {
 		result.IpInfo = aR
 		aRst := r.GetDomainIps(domain)
@@ -302,10 +302,10 @@ func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
 }
 
 // 发送man到ES
-func (ss *ScrapySite) SendJsonReq(data *Result, id string) {
+func (ss *ScrapySite) SendJsonReq(data *Result) {
 	jsonValue, err := json.Marshal(*data)
 	if nil == err {
-		ss.SendReq(bytes.NewBuffer(jsonValue), id)
+		ss.SendReq(bytes.NewBuffer(jsonValue), data.Url)
 	} else {
 		FnLog("SendJsonReq", err)
 	}
@@ -343,26 +343,41 @@ func (ss *ScrapySite) DoNotText(r *colly.Response, result *Result) {
 	ss.DoNotText4Parms(r.Body, r.Headers.Get("Content-Type"), result)
 }
 
-func (ss *ScrapySite) DoExtractors(r *Result, body []byte, x1 *ScrapyRule, e *colly.HTMLElement) {
+func (ss *ScrapySite) DoExtractors(r *Result, body []byte, x1 *ScrapyRule, e *colly.HTMLElement) bool {
 	if nil != e && nil != x1 && nil != r && nil != body && 0 < len(body) {
 		szB := string(body)
 		aRstE := []string{}
 		for _, j := range x1.Extractors {
-			r1, err := regexp.Compile(j)
+			r1, err := regexp.Compile(j.Reg)
 			if nil != err {
 				FnLog(j)
 				continue
 			}
-			aR1 := r1.FindAllString(szB, -1)
+			var aR1 []string
+			if "body" == j.Type {
+				aR1 = r1.FindAllString(szB, -1)
+			} else if "url" == j.Type {
+				aR1 = r1.FindAllString(r.Url, -1)
+			}
+			//e.Response.Headers
 			if nil != aR1 && 0 < len(aR1) {
 				aRstE = append(aRstE, aR1...)
+				if "url" == j.Type {
+					r.Url = "https://" + aR1[0]
+					r.IpInfo = ss.GetDomainInfo(r.Url, r)
+					if nil == r.IpInfo || 0 == len(r.IpInfo) {
+						return false
+					}
+				}
 			}
 		}
 		if 0 < len(aRstE) {
 			FnLog("DoExtractors ", aRstE)
 			r.Results = aRstE
+			return true
 		}
 	}
+	return false
 }
 
 func (ss *ScrapySite) DoResponseMap(absUrl, url, ContentType string, StatusCode int, body []byte, x1 *ScrapyRule, e *colly.HTMLElement) {
@@ -376,10 +391,11 @@ func (ss *ScrapySite) DoResponseMap(absUrl, url, ContentType string, StatusCode 
 		}
 	}
 
-	ss.DoExtractors(&result, body, x1, e)
-	ss.DoNotText4Parms(body, ContentType, &result)
-	SetCache(url, result)
-	go ss.SendJsonReq(&result, url)
+	if ss.DoExtractors(&result, body, x1, e) {
+		ss.DoNotText4Parms(body, ContentType, &result)
+		SetCache(url, result)
+		go ss.SendJsonReq(&result)
+	}
 }
 
 // 处理请求响应，并转换为ES需要到结构
@@ -427,10 +443,10 @@ func (ss *ScrapySite) init() {
 			}(x)
 		}
 		// Set error handler
-		ss.Scrapy.OnError(func(r *colly.Response, err error) {
-			ss.DoResponse2Es(r, nil, nil)
-			fmt.Println("Request URL:", r.Request.URL, "failed with response:", "Error:", err)
-		})
+		//ss.Scrapy.OnError(func(r *colly.Response, err error) {
+		//	ss.DoResponse2Es(r, nil, nil)
+		//	fmt.Println("Request URL:", r.Request.URL, "failed with response:", "Error:", err)
+		//})
 	})
 }
 

@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	flag.StringVar(&ss51pwn.ConfigName, "config", "./config.json", "config file name")
+	flag.StringVar(&ss51pwn.ConfigName, "config", "./config/config.json", "config file name")
 	flag.Parse()
 	ss51pwn.Init()
 

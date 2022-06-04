@@ -22,6 +22,10 @@
       "startUrls": ["https://seo.chinaz.com/peiwenxuexiao.com","https://seo.chinaz.com/chengdu.gov.cn"],
       "selector": ["div ._chinaz-seo-latelyc a"],
       "cbkUrlReg": ["\\/\\/seo\\.chinaz\\.com\\/.{3,}"],
-      "extractors": ["div ._chinaz-seo-latelyc a"]
+      "extractors": [
+        {
+          "reg":"([^\\/]+$)",
+          "type": "url"
+        }]
     }]
 }
