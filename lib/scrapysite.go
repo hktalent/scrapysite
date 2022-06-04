@@ -431,6 +431,9 @@ func (ss *ScrapySite) init() {
 				for _, j := range x1.Selector {
 					ss.Scrapy.OnHTML(j, func(e *colly.HTMLElement) {
 						link := e.Attr("href")
+						if "//" == link[0:2] {
+							link = "https:" + link
+						}
 						title := strings.TrimSpace(e.Text)
 						if ss.CallBack(link, title, x1.CbkUrlReg, x1.CbkTitleReg, e) {
 							ss.DoResponse2Es(e.Response, &x1, e)
