@@ -34,6 +34,9 @@ var EsThreas = make(chan struct{}, DefaultBindConf.ThreadNum)
 // 获取ip归宿信息的线程数nThreads / 4
 var getIpThread = make(chan struct{}, DefaultBindConf.ThreadNum/4)
 
+// 缓存下次开始到断点
+var state = NewState(10)
+
 // 定义爬虫结构
 type ScrapySite struct {
 	Scrapy *colly.Collector
@@ -162,14 +165,25 @@ func (r *ScrapySite) GetDomainIps(domain string) (aRst []string) {
 			// bug: 如果第一次没有获取到ip，后续非一直获取
 			ips, err := net.LookupIP(domain)
 			if nil == err {
+				m11 := make(map[string]interface{})
 				for _, ip := range ips {
 					if ipv4 := ip.To4(); ipv4 != nil {
+						if _, ok := m11[ipv4.String()]; ok {
+							continue
+						}
 						aRst = append(aRst, ipv4.String())
+						m11[ipv4.String()] = "1"
+						continue
 					}
 					if ipv4 := ip.To16(); ipv4 != nil {
+						if _, ok := m11[ipv4.String()]; ok {
+							continue
+						}
 						aRst = append(aRst, ipv4.String())
+						m11[ipv4.String()] = "1"
 					}
 				}
+				m11 = nil
 				if 0 < len(aRst) {
 					SetCache(domain, aRst)
 				}
@@ -436,7 +450,8 @@ func (ss *ScrapySite) init() {
 						}
 						title := strings.TrimSpace(e.Text)
 						if ss.CallBack(link, title, x1.CbkUrlReg, x1.CbkTitleReg, e) {
-							ss.DoResponse2Es(e.Response, &x1, e)
+							go state.Push(link)
+							go ss.DoResponse2Es(e.Response, &x1, e)
 							FnLog("start : ", link)
 							SetCache(link, Result{Url: link, Title: title})
 							e.Request.Visit(link)
@@ -498,6 +513,11 @@ func (ss *ScrapySite) OnRequest(onRequest func(*colly.Request)) {
 	})
 }
 
+//"a[href]"
+//"script[src]"
+//"form[action]"
+//c.AllowedDomains = nil
+//c.URLFilters = []*regexp.Regexp{regexp.MustCompile(".*(\\.|\\/\\/)" + strings.ReplaceAll(hostname, ".", "\\.") + "((#|\\/|\\?).*)?")
 // 支持多个url，分隔符号：[;,| ]
 func (ss *ScrapySite) Start() {
 	storage := &Storage{
@@ -510,11 +530,21 @@ func (ss *ScrapySite) Start() {
 		storage,
 		// &queue.InMemoryQueueStorage{MaxSize: nThreads}, // Use default queue storage
 	)
-	for _, x := range DefaultBindConf.ScrapyRule {
-		for _, j := range x.StartUrls {
-			q.AddURL(j)
+	var nHv int = 0
+	for _, x := range state.Urls {
+		if "" != x {
+			nHv += 1
+			q.AddURL(x)
 		}
-		// ss.Scrapy.Visit(url)
+	}
+	// 从断点开始
+	if 0 == nHv {
+		for _, x := range DefaultBindConf.ScrapyRule {
+			for _, j := range x.StartUrls {
+				q.AddURL(j)
+			}
+			// ss.Scrapy.Visit(url)
+		}
 	}
 	q.Run(ss.Scrapy)
 	ss.Scrapy.Wait()

@@ -69,7 +69,7 @@ type Config struct {
 	IdleConnTimeout       time.Duration `json:"idleConnTimeout"`       // 90s
 	TLSHandshakeTimeout   time.Duration `json:"TLSHandshakeTimeout"`   // 10s
 	ExpectContinueTimeout time.Duration `json:"expectContinueTimeout"` // 1s
-	ThreadNum             int           `json:"threadNum"`             // 16
+	ThreadNum             int           `json:"threadNum"`             // 8
 	DomainGlob            string        `json:"domainGlob"`            // *
 	RandomDelay           time.Duration `json:"randomDelay"`           // 15
 	GetIpUrlFormat        string        `json:"getIpUrlFormat"`        // "http://ip-api.com/json/%s"
@@ -93,7 +93,7 @@ var DefaultBindConf = Config{
 	IdleConnTimeout:       90,
 	TLSHandshakeTimeout:   10,
 	ExpectContinueTimeout: 1,
-	ThreadNum:             16,
+	ThreadNum:             8,
 	DomainGlob:            "*",
 	RandomDelay:           15,
 	EsUrl:                 "http://127.0.0.1:9200/scrapy_index/_doc/",

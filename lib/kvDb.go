@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"encoding/json"
 	"github.com/dgraph-io/badger"
 )
 
@@ -51,6 +52,12 @@ func (r *KvDbOp) Get(key string) (szRst []byte, err error) {
 		return err
 	})
 	return szRst, err
+}
+func (r *KvDbOp) PutAny(key string, data any) {
+	d, err := json.Marshal(data)
+	if nil == err {
+		r.Put(key, d)
+	}
 }
 
 func (r *KvDbOp) Put(key string, data []byte) {

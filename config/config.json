@@ -10,7 +10,7 @@
   "idleConnTimeout":       90,
   "TLSHandshakeTimeout":   10,
   "expectContinueTimeout": 1,
-  "threadNum":             16,
+  "threadNum":             8,
   "domainGlob":            "*",
   "randomDelay":           15,
   "esUrl":                 "http://127.0.0.1:9200/scrapy_index/_doc/",
