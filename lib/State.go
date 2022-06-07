@@ -4,6 +4,7 @@ import "encoding/json"
 
 type State struct {
 	Urls []string `json:"urls"`
+	Size int      `json:"size"`
 }
 
 var cacheS = NewKvDbOp("db/cacheSt")
@@ -15,13 +16,18 @@ func NewState(size int) *State {
 	if nil == err {
 		json.Unmarshal(o, &r)
 	} else {
-		r = State{Urls: make([]string, size)}
+		r = State{Urls: []string{}}
 	}
+	r.Size = size
 	return &r
 }
 
 func (r *State) Push(url string) *State {
-	r.Urls = append(r.Urls[1:len(r.Urls)-1], url)
+	if len(r.Urls) < r.Size {
+		r.Urls = append(r.Urls, url)
+	} else {
+		r.Urls = append(r.Urls[1:], url)
+	}
 	go cacheS.PutAny(szKey1, r)
 	return r
 }
