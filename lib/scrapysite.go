@@ -61,9 +61,54 @@ func SetCache(k string, o interface{}) {
 	}
 }
 
+var CacheNrpt = NewKvDbOp("db/_NoRpt")
+
+func (r *ScrapySite) checkRepeat(link string) bool {
+	d, err := CacheNrpt.Get(link)
+	if nil == err && nil != d {
+		return true
+	}
+	CacheNrpt.Put(link, []byte("1"))
+	return false
+}
+
+// 检查过滤器
+func (r *ScrapySite) checkFilger(link, title string, sr ScrapyRule, i *colly.HTMLElement) bool {
+	if nil != sr.CbkFilterUrlReg {
+		for _, x := range sr.CbkFilterUrlReg {
+			r1, err := regexp.Compile(x)
+			if nil == err {
+				if 0 < len(r1.FindAllString(link, -1)) {
+					//FnLog("CallBack: ", title, link)
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // 回调决定是否继续请求url
 // 链接、标题、选择器,正则，对象
-func (r *ScrapySite) CallBack(link, title string, regUrl []string, regTitle string, i interface{}) bool {
+func (r *ScrapySite) CallBack(link, title string, sr ScrapyRule, i *colly.HTMLElement) bool {
+	FnLog(link, " in callback ")
+	if r.checkRepeat(link) || r.checkFilger(link, title, sr, i) {
+		FnLog(link, " is skip")
+		return false
+	}
+
+	regUrl := sr.CbkUrlReg
+	regTitle := sr.CbkTitleReg
+	if sr.SameDomain {
+		u01, err := url.Parse(DefaultBindConf.ScrapyRule[0].StartUrls[0])
+		u02, err1 := url.Parse(link)
+		if nil != err || nil != err1 {
+			FnLog("CallBack url.Parse()", err, err1)
+		} else if nil != u02 && nil != u01 && 0 < len(u01.Host) && 0 < len(u02.Host) && u01.Host != u02.Host {
+			FnLog(u01.Host, u02.Host)
+			return false
+		}
+	}
 	szUrl := link // e.Request.URL.String()
 	// 过滤
 	if r.FilterHref(szUrl) {
@@ -273,6 +318,9 @@ func (ss *ScrapySite) GetIpInfo(ip string) (*IpInfo, error) {
 //var esCache = NewKvDbOp("EsCache")
 // 指定id发送数据到ES url，，data为json转换后到数据
 func (ss *ScrapySite) SendReq(data *bytes.Buffer, id string) {
+	if DefaultBindConf.CloseEsSave {
+		return
+	}
 	EsThreas <- struct{}{}
 	defer func() {
 		<-EsThreas
@@ -368,20 +416,33 @@ func (ss *ScrapySite) DoExtractors(r *Result, body []byte, x1 *ScrapyRule, e *co
 				continue
 			}
 			var aR1 []string
-			if "body" == j.Type {
+			switch j.Type {
+			case "body":
 				aR1 = r1.FindAllString(szB, -1)
-			} else if "url" == j.Type {
+				if nil != aR1 && 0 < len(aR1) {
+					r.Content = strings.Join(aR1, ",")
+				}
+			case "url":
 				aR1 = r1.FindAllString(r.Url, -1)
-			}
-			//e.Response.Headers
-			if nil != aR1 && 0 < len(aR1) {
-				aRstE = append(aRstE, aR1...)
-				if "url" == j.Type {
+				//e.Response.Headers
+				if nil != aR1 && 0 < len(aR1) {
+					aRstE = append(aRstE, aR1...)
 					r.Url = "https://" + aR1[0]
 					r.IpInfo = ss.GetDomainInfo(r.Url, r)
+					// 没有ip信息，可能是网络导致，所以返回过于鲁棒
 					if nil == r.IpInfo || 0 == len(r.IpInfo) {
-						return false
+						//return false
 					}
+				}
+			case "title":
+				aR1 = r1.FindAllString(szB, -1)
+				if nil != aR1 && 0 < len(aR1) {
+					r.Title = strings.Join(aR1, ",")
+				}
+			case "tags":
+				aR1 = r1.FindAllString(szB, -1)
+				if nil != aR1 && 0 < len(aR1) {
+					r.Tags = strings.Join(aR1, ",")
 				}
 			}
 		}
@@ -439,9 +500,10 @@ func (ss *ScrapySite) init() {
 		ss.Scrapy.OnResponse(func(r *colly.Response) {
 			ss.DoResponse2Es(r, nil, nil)
 		})
-		// 爬虫规则
+
 		for _, x := range DefaultBindConf.ScrapyRule {
 			func(x1 ScrapyRule) {
+				// 爬虫规则
 				for _, j := range x1.Selector {
 					ss.Scrapy.OnHTML(j, func(e *colly.HTMLElement) {
 						link := e.Attr("href")
@@ -449,10 +511,11 @@ func (ss *ScrapySite) init() {
 							link = "https:" + link
 						}
 						title := strings.TrimSpace(e.Text)
-						if ss.CallBack(link, title, x1.CbkUrlReg, x1.CbkTitleReg, e) {
+						FnLog(link, title)
+						if ss.CallBack(link, title, x1, e) {
 							go state.Push(link)
 							go ss.DoResponse2Es(e.Response, &x1, e)
-							FnLog("start : ", link)
+							FnLog("start : ", link, title)
 							SetCache(link, Result{Url: link, Title: title})
 							e.Request.Visit(link)
 						}
@@ -531,8 +594,13 @@ func (ss *ScrapySite) Start() {
 		// &queue.InMemoryQueueStorage{MaxSize: nThreads}, // Use default queue storage
 	)
 	var nHv int = 0
+	u1, err := url.Parse(DefaultBindConf.ScrapyRule[0].StartUrls[0])
+	if err != nil {
+		FnLog("DefaultBindConf.ScrapyRule[0].StartUrls[0] ", err)
+	}
+
 	for _, x := range state.Urls {
-		if "" != x {
+		if "" != x && -1 < strings.Index(x, u1.Host) {
 			nHv += 1
 			q.AddURL(x)
 		}
@@ -541,10 +609,13 @@ func (ss *ScrapySite) Start() {
 	if 0 == nHv {
 		for _, x := range DefaultBindConf.ScrapyRule {
 			for _, j := range x.StartUrls {
+				//FnLog(j)
 				q.AddURL(j)
 			}
 			// ss.Scrapy.Visit(url)
 		}
+	} else {
+		FnLog("Started from last process breakpoint")
 	}
 	q.Run(ss.Scrapy)
 	ss.Scrapy.Wait()

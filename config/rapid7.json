@@ -1,0 +1,47 @@
+{
+  "verbose":               true,
+  "cacheDir":              "./db/coursera_cache",
+  "dnsDbCache":            "./db/dnsDbCache",
+  "esCacheName":           "./db/EsCache",
+  "sqliteDbName":          "./db/results.db",
+  "timeout":               10,
+  "keepAlive":             10,
+  "maxIdleConns":          32,
+  "idleConnTimeout":       90,
+  "TLSHandshakeTimeout":   10,
+  "expectContinueTimeout": 1,
+  "threadNum":             8,
+  "domainGlob":            "*",
+  "randomDelay":           15,
+  "esUrl":                 "http://127.0.0.1:9200/scrapy_index/_doc/",
+  "closeEsSave":           true,
+  "getIpUrlFormat":        "http://ip-api.com/json/%s",
+  "ipRegs":                ["^(\\d{1,3}\\.){3}\\d{1,3}$"],
+  "filterHrefReg":         ["^(#|javascript|mailto:)|(favicon\\.ico$)"],
+  "scrapyRule":            [
+    {
+      "sameDomain": true,
+      "startUrls": ["https://www.rapid7.com/blog/author/rapid7/","https://www.rapid7.com/blog/tag/research/","https://www.rapid7.com/blog/posts/"],
+      "selector": ["a[href*='/blog/post/'","a[href*='/blog/tag/'"],
+      "cbkUrlReg": ["a[href*='/blog/post/']","a[href*='/blog/tag/'"],
+      "cbkFilterUrlReg": ["日本語"],
+      "extractors":[
+        {
+          "reg": "body > div.off-canvas-wrapper > div > div.off-canvas-content > div.pageContent > section > div > div > div.small-12.medium-6.medium-offset-1.large-7.large-offset-1.cell.blog-single-post__main-column > div:nth-child(1) > div.blog-single-post__main-column--heading > h1",
+          "type": "title"
+        },
+        {
+          "type": "content",
+          "reg":"div.post-content"
+        },
+        {
+          "type": "lastupdated",
+          "reg":"/html/body/div[2]/div/div[2]/div[2]/section/div/div/div[1]/div[1]/div[1]/div/ul[1]/li[1]"
+        },{
+          "type":"tags",
+          "reg": "/html/body/div[2]/div/div[2]/div[2]/section/div/div/div[1]/div[1]/div[1]/div/ul[1]/li[3]"
+        }
+      ]
+    }
+  ]
+}
